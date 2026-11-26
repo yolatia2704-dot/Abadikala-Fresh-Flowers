@@ -1,0 +1,35 @@
+/* ==========================================================================
+   Abadikala Fresh Flowers — Official Brand Design Tokens
+   Source: Official Logo Guide ("Jam Pasir Bunga") & UMKM Abadikala PDF Proposal
+   - Forest Green: #1F3D2F (Primary grounded brand & logo bottom tulip)
+   - Warm Ivory:   #F6F1E7 (Official warm canvas background)
+   - Muted Blush:  #D9A9A3 (Official logo top tulip & feminine warmth)
+   - Burgundy Rose:#743844 (PDF editorial heading & romantic CTA accent)
+   ========================================================================== */
+
+:root {
+  /* Official Abadikala Brand Palette */
+  --rgb-brand-forest: 31 61 47;          /* #1F3D2F Official Forest Green */
+  --rgb-brand-primary: 116 56 68;        /* #743844 PDF Burgundy Rose (CTA & Editorial Accent) */
+  --rgb-brand-primary-hover: 92 42 52;   /* #5C2A34 Deeper Burgundy */
+  --rgb-brand-secondary: 217 169 163;    /* #D9A9A3 Official Muted Blush */
+  --rgb-brand-blush: 247 236 234;        /* #F7ECEA Soft Blush Surface */
+  --rgb-brand-sage: 31 61 47;            /* #1F3D2F Forest Green for Lini Segar & botanical badges */
+  --rgb-brand-sage-soft: 232 239 234;    /* #E8EFEA Soft Forest Tint */
+
+  /* Surfaces & Backgrounds */
+  --rgb-bg-base: 246 241 231;            /* #F6F1E7 Official Warm Ivory */
+  --rgb-bg-surface: 255 253 250;         /* #FFFDFA Soft Ivory White Card Surface */
+  --rgb-bg-muted: 238 230 218;           /* #EEE6DA Warm Linen Contrast */
+
+  /* Typography & Borders */
+  --rgb-text-primary: 31 46 39;          /* #1F2E27 Deep Forest Charcoal Ink (High Contrast) */
+  --rgb-text-secondary: 93 84 82;        /* #5D5452 Warm Muted Slate */
+  --rgb-text-muted: 138 128 125;         /* #8A807D Subtle Caption Ink */
+  --rgb-border: 226 215 203;             /* #E2D7CB Warm Ivory Border */
+
+  /* Semantic Status Colors */
+  --color-success: #1F3D2F;
+  --color-warning: #A66E1E;
+  --color-error: #B43844;
+}
