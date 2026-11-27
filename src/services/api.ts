@@ -679,51 +679,12 @@ export async function fetchCustomerOrders(userId: string): Promise<Order[]> {
 // ============================================================================
 
 export async function createCustomOrder(payload: CreateCustomOrderPayload): Promise<CustomOrder> {
+  const customOrderId = crypto.randomUUID();
   const requestNumber = generateCustomRequestNumber();
   const now = new Date().toISOString();
 
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('custom_orders')
-      .insert({
-        request_number: requestNumber,
-        user_id: payload.user_id,
-        customer_name: sanitizeText(payload.customer_name),
-        customer_whatsapp: sanitizeText(payload.customer_whatsapp),
-        customer_email: payload.customer_email ? sanitizeText(payload.customer_email) : null,
-        product_type: sanitizeText(payload.product_type),
-        occasion: sanitizeText(payload.occasion),
-        needed_date: payload.needed_date,
-        budget_min: payload.budget_min,
-        budget_max: payload.budget_max,
-        dominant_colors: sanitizeText(payload.dominant_colors),
-        preferred_flowers: payload.preferred_flowers ? sanitizeText(payload.preferred_flowers) : null,
-        size_preference: payload.size_preference,
-        greeting_card_message: payload.greeting_card_message
-          ? sanitizeText(payload.greeting_card_message)
-          : null,
-        additional_notes: payload.additional_notes ? sanitizeText(payload.additional_notes) : null,
-        status: 'new',
-      })
-      .select()
-      .single();
-    if (error) throw new Error(error.message);
-
-    if (payload.attachments.length > 0) {
-      await supabase.from('custom_order_attachments').insert(
-        payload.attachments.map((a) => ({
-          custom_order_id: data.id,
-          ...a,
-        }))
-      );
-    }
-
-    return { ...data, attachments: payload.attachments.map((a) => ({ id: crypto.randomUUID(), ...a })) } as CustomOrder;
-  }
-
-  const db = readLocalDb();
-  const created: CustomOrder = {
-    id: crypto.randomUUID(),
+  const createdRecord: CustomOrder = {
+    id: customOrderId,
     request_number: requestNumber,
     user_id: payload.user_id,
     customer_name: sanitizeText(payload.customer_name),
@@ -737,7 +698,9 @@ export async function createCustomOrder(payload: CreateCustomOrderPayload): Prom
     dominant_colors: sanitizeText(payload.dominant_colors),
     preferred_flowers: payload.preferred_flowers ? sanitizeText(payload.preferred_flowers) : null,
     size_preference: payload.size_preference,
-    greeting_card_message: payload.greeting_card_message ? sanitizeText(payload.greeting_card_message) : null,
+    greeting_card_message: payload.greeting_card_message
+      ? sanitizeText(payload.greeting_card_message)
+      : null,
     additional_notes: payload.additional_notes ? sanitizeText(payload.additional_notes) : null,
     status: 'new',
     quoted_price: null,
@@ -747,9 +710,47 @@ export async function createCustomOrder(payload: CreateCustomOrderPayload): Prom
     created_at: now,
     updated_at: now,
   };
-  db.custom_orders.unshift(created);
+
+  if (isSupabaseConfigured && supabase) {
+    // Insert with pre-generated UUID without .select() so unauthenticated guests (anon)
+    // can submit custom requests while RLS keeps other customers' custom_orders private.
+    const { error } = await supabase.from('custom_orders').insert({
+      id: createdRecord.id,
+      request_number: createdRecord.request_number,
+      user_id: createdRecord.user_id,
+      customer_name: createdRecord.customer_name,
+      customer_whatsapp: createdRecord.customer_whatsapp,
+      customer_email: createdRecord.customer_email,
+      product_type: createdRecord.product_type,
+      occasion: createdRecord.occasion,
+      needed_date: createdRecord.needed_date,
+      budget_min: createdRecord.budget_min,
+      budget_max: createdRecord.budget_max,
+      dominant_colors: createdRecord.dominant_colors,
+      preferred_flowers: createdRecord.preferred_flowers,
+      size_preference: createdRecord.size_preference,
+      greeting_card_message: createdRecord.greeting_card_message,
+      additional_notes: createdRecord.additional_notes,
+      status: 'new',
+    });
+    if (error) throw new Error(error.message);
+
+    if (payload.attachments.length > 0) {
+      await supabase.from('custom_order_attachments').insert(
+        payload.attachments.map((a) => ({
+          custom_order_id: createdRecord.id,
+          ...a,
+        }))
+      );
+    }
+
+    return createdRecord;
+  }
+
+  const db = readLocalDb();
+  db.custom_orders.unshift(createdRecord);
   writeLocalDb(db);
-  return created;
+  return createdRecord;
 }
 
 export async function submitContactMessage(payload: {
@@ -789,8 +790,9 @@ export async function subscribeNewsletter(email: string): Promise<void> {
   if (isSupabaseConfigured && supabase) {
     const { error } = await supabase
       .from('newsletter_subscribers')
-      .upsert({ email: cleanEmail, is_active: true }, { onConflict: 'email' });
-    if (error) throw new Error(error.message);
+      .insert({ email: cleanEmail, is_active: true });
+    // Ignore duplicate key error (already subscribed)
+    if (error && error.code !== '23505') throw new Error(error.message);
     return;
   }
   const db = readLocalDb();

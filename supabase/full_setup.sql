@@ -1,9 +1,4 @@
 -- ==============================================================================
--- ABADIKALA FRESH FLOWERS — COMPLETE ONE-CLICK SUPABASE SETUP SQL (UTF-8)
--- Copy & paste entire file into Supabase Dashboard -> SQL Editor -> Run
--- ==============================================================================
-
--- ==============================================================================
 -- Abadikala Fresh Flowers — Migration 001: Core Relational Schema (30 Tables)
 -- Idempotent where possible. Uses UUID PKs and NUMERIC(12,2) for all money values.
 -- ==============================================================================
@@ -1164,6 +1159,8 @@ DECLARE
   v_item JSONB;
   v_product RECORD;
   v_variant RECORD;
+  v_variant_id UUID;
+  v_variant_name TEXT;
   v_unit_price NUMERIC(12,2);
   v_line_total NUMERIC(12,2);
   v_subtotal NUMERIC(12,2) := 0;
@@ -1269,11 +1266,14 @@ BEGIN
     v_qty := GREATEST(1, (v_item->>'quantity')::INTEGER);
     SELECT * INTO v_product FROM public.products WHERE id = (v_item->>'product_id')::UUID;
     v_unit_price := v_product.selling_price;
-    v_variant := NULL;
+    v_variant_id := NULL;
+    v_variant_name := NULL;
 
     IF (v_item->>'variant_id') IS NOT NULL AND (v_item->>'variant_id') <> '' THEN
       SELECT * INTO v_variant FROM public.product_variants WHERE id = (v_item->>'variant_id')::UUID;
       IF FOUND THEN
+        v_variant_id := v_variant.id;
+        v_variant_name := v_variant.name;
         v_unit_price := v_unit_price + v_variant.price_delta;
       END IF;
     END IF;
@@ -1292,9 +1292,9 @@ BEGIN
       variant_name_snapshot, image_url_snapshot,
       quantity, unit_price, unit_cost_snapshot, line_total, customization_notes
     ) VALUES (
-      v_order_id, v_product.id, CASE WHEN v_variant.id IS NOT NULL THEN v_variant.id ELSE NULL END,
+      v_order_id, v_product.id, v_variant_id,
       v_product.name, v_product.slug, v_product.product_line,
-      CASE WHEN v_variant.id IS NOT NULL THEN v_variant.name ELSE NULL END, v_img,
+      v_variant_name, v_img,
       v_qty, v_unit_price, v_product.cost_price, v_line_total, v_item->>'customization_notes'
     );
   END LOOP;
