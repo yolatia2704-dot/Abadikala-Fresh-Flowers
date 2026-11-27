@@ -85,6 +85,7 @@ export function App() {
                       <Route path="/custom" element={<CustomOrderPage />} />
                       <Route path="/lacak-pesanan" element={<OrderTrackingPage />} />
                       <Route path="/track" element={<OrderTrackingPage />} />
+                      <Route path="/track-order" element={<OrderTrackingPage />} />
                       {/* Canonical Information & Legal Routes */}
                       <Route path="/about" element={<AboutPage />} />
                       <Route path="/contact" element={<ContactPage />} />

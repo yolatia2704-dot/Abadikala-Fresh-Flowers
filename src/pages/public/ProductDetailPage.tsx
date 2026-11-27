@@ -170,6 +170,12 @@ export function ProductDetailPage() {
               <img
                 src={selectedImage}
                 alt={product.name}
+                onError={(e) => {
+                  if (!e.currentTarget.dataset.fallback) {
+                    e.currentTarget.dataset.fallback = '1';
+                    e.currentTarget.src = '/images/hero-abadikala.jpg';
+                  }
+                }}
                 className="aspect-[3/4] w-full rounded-2xl object-cover"
               />
             </div>

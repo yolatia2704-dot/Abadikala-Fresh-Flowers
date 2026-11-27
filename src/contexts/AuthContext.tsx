@@ -5,18 +5,44 @@ import type { AppRole, UserProfile } from '@/types/database';
 
 const LOCAL_SESSION_KEY = 'abadikala_preview_session_v1';
 
+export function translateAuthError(message: string): string {
+  const lower = (message || '').toLowerCase();
+  if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
+    return 'Email atau kata sandi salah. Silakan periksa kembali.';
+  }
+  if (lower.includes('email not confirmed')) {
+    return 'Email Anda belum terkonfirmasi. Silakan hubungi admin atau coba masuk kembali.';
+  }
+  if (lower.includes('user already registered') || lower.includes('sudah terdaftar') || lower.includes('duplicate key')) {
+    return 'Email ini sudah terdaftar. Silakan masuk menggunakan akun Anda.';
+  }
+  if (lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'Terlalu banyak permintaan dalam waktu singkat. Silakan tunggu sebentar lalu coba lagi.';
+  }
+  if (lower.includes('password should be at least') || lower.includes('minimal 6 karakter')) {
+    return 'Kata sandi minimal 6 karakter.';
+  }
+  if (lower.includes('invalid email') || lower.includes('unable to validate email')) {
+    return 'Format alamat email tidak valid.';
+  }
+  if (lower.includes('failed to fetch') || lower.includes('network')) {
+    return 'Koneksi ke server terganggu. Pastikan internet Anda stabil lalu coba lagi.';
+  }
+  return message || 'Terjadi kendala autentikasi. Silakan coba lagi.';
+}
+
 interface AuthContextValue {
   user: UserProfile | null;
   isLoading: boolean;
   isAdmin: boolean;
   isManager: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<UserProfile | null>;
   signUp: (payload: {
     full_name: string;
     email: string;
     whatsapp_number: string;
     password: string;
-  }) => Promise<void>;
+  }) => Promise<UserProfile | null>;
   signOut: () => Promise<void>;
   updateProfile: (patch: { full_name: string; whatsapp_number: string }) => Promise<void>;
   /** Strictly available ONLY in Local Preview Mode when Supabase is not configured */
@@ -31,16 +57,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadSupabaseProfile = async (userId: string, email: string) => {
     if (!supabase) return null;
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    const { data: roleRow } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .single();
+    const [{ data: profile }, { data: roleRow }] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', userId).maybeSingle(),
+      supabase.from('user_roles').select('role').eq('user_id', userId).maybeSingle(),
+    ]);
 
     return {
       id: userId,
@@ -96,19 +116,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string): Promise<UserProfile | null> => {
+    const cleanEmail = email.trim().toLowerCase();
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password,
+      });
+      if (error) throw new Error(translateAuthError(error.message));
       if (data.user) {
-        const prof = await loadSupabaseProfile(data.user.id, data.user.email || email);
+        const prof = await loadSupabaseProfile(data.user.id, data.user.email || cleanEmail);
         setUser(prof);
+        return prof;
       }
-      return;
+      return null;
     }
 
     const db = readLocalDb();
-    const cleanEmail = email.trim().toLowerCase();
     const existing = db.users.find((u) => u.email.toLowerCase() === cleanEmail);
     if (!existing) {
       throw new Error(
@@ -122,6 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void _pw;
     localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(safeUser));
     setUser(safeUser);
+    return safeUser;
   };
 
   const signUp = async (payload: {
@@ -129,30 +154,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     email: string;
     whatsapp_number: string;
     password: string;
-  }) => {
+  }): Promise<UserProfile | null> => {
+    const cleanEmail = payload.email.trim().toLowerCase();
     if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email: payload.email,
-        password: payload.password,
-        options: {
-          data: {
-            full_name: payload.full_name,
-            whatsapp_number: payload.whatsapp_number,
-          },
-        },
+      // Uses server-side instant confirmed registration RPC to avoid Supabase free-tier SMTP rate limits,
+      // then immediately creates a real authenticated JWT session via signInWithPassword.
+      const { error: rpcErr } = await supabase.rpc('register_customer_instant', {
+        p_email: cleanEmail,
+        p_password: payload.password,
+        p_full_name: payload.full_name.trim(),
+        p_whatsapp_number: payload.whatsapp_number.trim(),
       });
-      if (error) throw new Error(error.message);
-      if (data.user) {
-        const prof = await loadSupabaseProfile(data.user.id, payload.email);
-        setUser(prof);
+      if (rpcErr) {
+        throw new Error(translateAuthError(rpcErr.message));
       }
-      return;
+
+      const { data: loginData, error: loginErr } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: payload.password,
+      });
+      if (loginErr) {
+        throw new Error(translateAuthError(loginErr.message));
+      }
+      if (loginData.user) {
+        const prof = await loadSupabaseProfile(loginData.user.id, cleanEmail);
+        setUser(prof);
+        return prof;
+      }
+      return null;
     }
 
     const db = readLocalDb();
-    const cleanEmail = payload.email.trim().toLowerCase();
     if (db.users.some((u) => u.email.toLowerCase() === cleanEmail)) {
-      throw new Error('Email sudah terdaftar. Silakan masuk.');
+      throw new Error('Email ini sudah terdaftar. Silakan masuk menggunakan akun Anda.');
     }
     const newUser: UserProfile & { password_hash?: string } = {
       id: crypto.randomUUID(),
@@ -171,6 +205,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void _pw;
     localStorage.setItem(LOCAL_SESSION_KEY, JSON.stringify(safeUser));
     setUser(safeUser);
+    return safeUser;
   };
 
   const signOut = async () => {

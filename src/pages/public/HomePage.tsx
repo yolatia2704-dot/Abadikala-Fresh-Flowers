@@ -556,6 +556,12 @@ export function HomePage() {
                     src={item.image_url}
                     alt={item.title}
                     loading="lazy"
+                    onError={(e) => {
+                      if (!e.currentTarget.dataset.fallback) {
+                        e.currentTarget.dataset.fallback = '1';
+                        e.currentTarget.src = '/images/hero-abadikala.jpg';
+                      }
+                    }}
                     className="aspect-[3/4] w-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
                   <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink-primary/80 via-ink-primary/30 to-transparent p-4 text-white">

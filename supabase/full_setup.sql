@@ -1,10 +1,10 @@
 -- ==============================================================================
--- ABADIKALA FRESH FLOWERS — COMPLETE ONE-CLICK SUPABASE SETUP SQL
+-- ABADIKALA FRESH FLOWERS — COMPLETE ONE-CLICK SUPABASE SETUP SQL (UTF-8)
 -- Copy & paste entire file into Supabase Dashboard -> SQL Editor -> Run
 -- ==============================================================================
 
 -- ==============================================================================
--- Abadikala Fresh Flowers â€” Migration 001: Core Relational Schema (30 Tables)
+-- Abadikala Fresh Flowers — Migration 001: Core Relational Schema (30 Tables)
 -- Idempotent where possible. Uses UUID PKs and NUMERIC(12,2) for all money values.
 -- ==============================================================================
 
@@ -647,7 +647,7 @@ END $$;
 
 
 -- ==============================================================================
--- Abadikala Fresh Flowers â€” Migration 002: Row Level Security, Safe Views & Storage
+-- Abadikala Fresh Flowers — Migration 002: Row Level Security, Safe Views & Storage
 -- Enforces RBAC, customer privacy, and strict HPP (cost_price) isolation.
 -- ==============================================================================
 
@@ -692,7 +692,7 @@ AS $$
 $$;
 
 -- ------------------------------------------------------------------------------
--- Public Catalog View â€” Explicitly EXCLUDES cost_price (HPP)
+-- Public Catalog View — Explicitly EXCLUDES cost_price (HPP)
 -- Customers and guests query ONLY this view, never raw products.cost_price.
 -- ------------------------------------------------------------------------------
 CREATE OR REPLACE VIEW public.products_public
@@ -1093,7 +1093,7 @@ CREATE POLICY "admin_read_private_buckets" ON storage.objects
 
 
 -- ==============================================================================
--- Abadikala Fresh Flowers â€” Migration 003: Secure Server-Side RPCs & Triggers
+-- Abadikala Fresh Flowers — Migration 003: Secure Server-Side RPCs & Triggers
 -- ==============================================================================
 
 -- Auto-create profile and default customer role on Supabase Auth signup
@@ -1524,7 +1524,349 @@ GRANT EXECUTE ON FUNCTION public.admin_get_financial_report TO authenticated;
 
 
 -- ==============================================================================
--- Abadikala Fresh Flowers â€” Initial Seed Data (From Business Proposal)
+-- Abadikala Fresh Flowers — Migration 004:
+-- 1. Instant Customer Registration RPC (eliminates Supabase free SMTP email rate limit)
+-- 2. Auto-confirm email trigger on auth.users
+-- 3. Guest & Customer Manual Payment Proof RPC (never auto-confirms payment)
+-- 4. Admin Custom Order -> Official Order conversion RPC
+-- 5. Complete PostgreSQL Role GRANTs matching RLS policies
+-- ==============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ------------------------------------------------------------------------------
+-- 1. Auto-confirm email on new auth.users inserts (defense in depth)
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.auto_confirm_auth_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = auth, public
+AS $$
+BEGIN
+  IF NEW.email_confirmed_at IS NULL THEN
+    NEW.email_confirmed_at := NOW();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_auto_confirm_auth_user ON auth.users;
+CREATE TRIGGER trg_auto_confirm_auth_user
+  BEFORE INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.auto_confirm_auth_user();
+
+-- ------------------------------------------------------------------------------
+-- 2. Instant Customer Registration RPC (bypasses GoTrue free-tier SMTP rate limit)
+-- Creates confirmed auth.users + auth.identities + profiles + user_roles('customer').
+-- Client immediately signs in via supabase.auth.signInWithPassword().
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.register_customer_instant(
+  p_email TEXT,
+  p_password TEXT,
+  p_full_name TEXT,
+  p_whatsapp_number TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = auth, public, extensions
+AS $$
+DECLARE
+  v_email TEXT := lower(trim(COALESCE(p_email, '')));
+  v_name TEXT := trim(COALESCE(p_full_name, ''));
+  v_wa TEXT := NULLIF(trim(COALESCE(p_whatsapp_number, '')), '');
+  v_user_id UUID := gen_random_uuid();
+  v_instance_id UUID;
+  v_hashed_pw TEXT;
+BEGIN
+  IF v_email = '' OR position('@' IN v_email) < 2 THEN
+    RAISE EXCEPTION 'Masukkan alamat email yang valid.';
+  END IF;
+  IF char_length(COALESCE(p_password, '')) < 6 THEN
+    RAISE EXCEPTION 'Kata sandi minimal 6 karakter.';
+  END IF;
+  IF char_length(v_name) < 2 THEN
+    RAISE EXCEPTION 'Nama lengkap minimal 2 karakter.';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM auth.users WHERE lower(email) = v_email AND deleted_at IS NULL) THEN
+    RAISE EXCEPTION 'Email ini sudah terdaftar. Silakan masuk menggunakan akun Anda.';
+  END IF;
+
+  SELECT COALESCE(
+    (SELECT instance_id FROM auth.users LIMIT 1),
+    '00000000-0000-0000-0000-000000000000'::uuid
+  ) INTO v_instance_id;
+
+  v_hashed_pw := crypt(p_password, gen_salt('bf'));
+
+  INSERT INTO auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    recovery_sent_at,
+    last_sign_in_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    confirmation_token,
+    email_change,
+    email_change_token_new,
+    recovery_token
+  ) VALUES (
+    v_instance_id,
+    v_user_id,
+    'authenticated',
+    'authenticated',
+    v_email,
+    v_hashed_pw,
+    NOW(),
+    NULL,
+    NULL,
+    jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email')),
+    jsonb_build_object('full_name', v_name, 'whatsapp_number', v_wa),
+    NOW(),
+    NOW(),
+    '',
+    '',
+    '',
+    ''
+  );
+
+  INSERT INTO auth.identities (
+    id,
+    user_id,
+    provider_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
+  ) VALUES (
+    gen_random_uuid(),
+    v_user_id,
+    v_user_id::text,
+    jsonb_build_object('sub', v_user_id::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
+    'email',
+    NOW(),
+    NOW(),
+    NOW()
+  );
+
+  INSERT INTO public.profiles (id, full_name, email, whatsapp_number)
+  VALUES (v_user_id, v_name, v_email, v_wa)
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        whatsapp_number = COALESCE(EXCLUDED.whatsapp_number, public.profiles.whatsapp_number);
+
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES (v_user_id, 'customer')
+  ON CONFLICT (user_id) DO NOTHING;
+
+  RETURN jsonb_build_object('user_id', v_user_id, 'email', v_email);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.register_customer_instant(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 3. Guest & Customer Manual Payment Proof Submission RPC
+-- Strictly sets status to 'awaiting_verification' (NEVER 'confirmed').
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.submit_payment_proof_public(
+  p_order_number TEXT,
+  p_sender_name TEXT,
+  p_sender_reference TEXT DEFAULT NULL,
+  p_proof_image_url TEXT DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_order RECORD;
+  v_clean_sender TEXT := trim(COALESCE(p_sender_name, ''));
+BEGIN
+  IF v_clean_sender = '' THEN
+    RAISE EXCEPTION 'Nama pemilik rekening pengirim wajib diisi.';
+  END IF;
+
+  SELECT * INTO v_order
+  FROM public.orders
+  WHERE upper(order_number) = upper(trim(COALESCE(p_order_number, '')))
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pesanan tidak ditemukan.';
+  END IF;
+
+  IF v_order.status = 'cancelled' THEN
+    RAISE EXCEPTION 'Pesanan yang dibatalkan tidak dapat menerima bukti pembayaran.';
+  END IF;
+
+  UPDATE public.payments
+  SET sender_name = v_clean_sender,
+      sender_reference = NULLIF(trim(COALESCE(p_sender_reference, '')), ''),
+      proof_image_url = COALESCE(p_proof_image_url, proof_image_url),
+      status = 'awaiting_verification'
+  WHERE order_id = v_order.id;
+
+  UPDATE public.orders
+  SET payment_status = 'awaiting_verification',
+      status = CASE WHEN status = 'awaiting_payment' THEN 'awaiting_verification' ELSE status END
+  WHERE id = v_order.id;
+
+  INSERT INTO public.order_status_history (order_id, status, note, changed_by)
+  VALUES (
+    v_order.id,
+    'awaiting_verification',
+    'Bukti pembayaran dikirim oleh ' || v_clean_sender || ' — menunggu verifikasi admin.',
+    auth.uid()
+  );
+
+  RETURN TRUE;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.submit_payment_proof_public(TEXT, TEXT, TEXT, TEXT) TO anon, authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 4. Admin Custom Order -> Official Order Conversion RPC
+-- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.admin_convert_custom_order_to_order(
+  p_custom_order_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_co RECORD;
+  v_order_id UUID := gen_random_uuid();
+  v_order_number TEXT;
+BEGIN
+  IF NOT public.has_admin_role(auth.uid()) THEN
+    RAISE EXCEPTION 'Akses ditolak: hanya admin yang dapat mengonversi custom order.';
+  END IF;
+
+  SELECT * INTO v_co FROM public.custom_orders WHERE id = p_custom_order_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Custom order tidak ditemukan.';
+  END IF;
+  IF v_co.status <> 'approved' OR v_co.quoted_price IS NULL THEN
+    RAISE EXCEPTION 'Custom order hanya dapat dikonversi setelah berstatus Disetujui dan memiliki penawaran harga.';
+  END IF;
+  IF v_co.linked_order_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Custom order ini sudah terhubung dengan pesanan resmi.';
+  END IF;
+
+  v_order_number := 'ABK-' || to_char(NOW(), 'YYYYMMDD') || '-' || upper(substring(replace(v_order_id::text, '-', ''), 1, 6));
+
+  INSERT INTO public.orders (
+    id, order_number, user_id, custom_order_id, status, payment_status,
+    customer_name, customer_whatsapp, customer_email,
+    fulfillment_type, shipping_method_name, requested_delivery_date,
+    recipient_name, recipient_phone, greeting_card_type, greeting_card_message,
+    special_notes, custom_instructions, subtotal, total_amount, internal_notes
+  ) VALUES (
+    v_order_id, v_order_number, v_co.user_id, v_co.id, 'awaiting_payment', 'pending',
+    v_co.customer_name, v_co.customer_whatsapp, COALESCE(v_co.customer_email, 'belum-diisi@abadikala.local'),
+    'pending_confirmation', 'Menunggu konfirmasi pengiriman', v_co.needed_date,
+    v_co.customer_name, v_co.customer_whatsapp,
+    CASE WHEN v_co.greeting_card_message IS NOT NULL THEN 'Kartu Tulisan Tangan' ELSE NULL END,
+    v_co.greeting_card_message, v_co.additional_notes,
+    v_co.product_type || ' • ' || v_co.occasion || ' • Warna: ' || COALESCE(v_co.dominant_colors, '-'),
+    v_co.quoted_price, v_co.quoted_price,
+    'Dikonversi dari Custom Request ' || v_co.request_number
+  );
+
+  INSERT INTO public.order_items (
+    order_id, product_name_snapshot, product_line_snapshot, variant_name_snapshot,
+    image_url_snapshot, quantity, unit_price, line_total, customization_notes
+  ) VALUES (
+    v_order_id,
+    'Custom: ' || v_co.product_type || ' (' || v_co.request_number || ')',
+    CASE WHEN lower(v_co.product_type) LIKE '%awet%' OR lower(v_co.product_type) LIKE '%kering%' OR lower(v_co.product_type) LIKE '%pres%' OR lower(v_co.product_type) LIKE '%shadow%' THEN 'preserved'::public.product_line ELSE 'fresh'::public.product_line END,
+    v_co.size_preference,
+    '/images/hero-abadikala.jpg',
+    1, v_co.quoted_price, v_co.quoted_price, v_co.admin_quote_notes
+  );
+
+  INSERT INTO public.payments (order_id, method_code, method_label, amount, status)
+  VALUES (v_order_id, 'manual_transfer', 'Transfer Manual (Verifikasi Admin)', v_co.quoted_price, 'pending');
+
+  INSERT INTO public.order_status_history (order_id, status, note, changed_by)
+  VALUES (v_order_id, 'awaiting_payment', 'Pesanan dibuat dari Custom Request ' || v_co.request_number, auth.uid());
+
+  UPDATE public.custom_orders
+  SET linked_order_id = v_order_id, status = 'in_progress'
+  WHERE id = v_co.id;
+
+  INSERT INTO public.audit_logs (actor_id, actor_role, action, entity_type, entity_id, new_values)
+  VALUES (
+    auth.uid(), public.get_user_role(auth.uid()),
+    'custom_order.converted', 'orders', v_order_id::text,
+    jsonb_build_object('order_number', v_order_number, 'request_number', v_co.request_number)
+  );
+
+  RETURN jsonb_build_object('order_id', v_order_id, 'order_number', v_order_number);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_convert_custom_order_to_order(UUID) TO authenticated;
+
+-- ------------------------------------------------------------------------------
+-- 5. Complete Role GRANTs (RLS enforces row-level authorization & HPP isolation)
+-- ------------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA public TO anon, authenticated;
+GRANT SELECT ON public.products_public TO anon, authenticated;
+GRANT SELECT ON
+  public.categories, public.product_images, public.product_variants,
+  public.inventory, public.shipping_methods, public.coupons,
+  public.reviews, public.banners, public.homepage_sections,
+  public.galleries, public.testimonials, public.business_settings
+TO anon, authenticated;
+
+GRANT INSERT ON
+  public.contact_messages, public.newsletter_subscribers,
+  public.custom_orders, public.custom_order_attachments
+TO anon, authenticated;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  public.profiles, public.user_roles, public.addresses,
+  public.categories, public.products, public.product_images, public.product_variants,
+  public.inventory, public.inventory_movements,
+  public.carts, public.cart_items, public.wishlists, public.wishlist_items,
+  public.orders, public.order_status_history, public.payments,
+  public.shipping_methods, public.custom_orders, public.custom_order_attachments,
+  public.coupons, public.reviews, public.banners, public.homepage_sections,
+  public.galleries, public.testimonials, public.business_settings,
+  public.contact_messages, public.newsletter_subscribers, public.audit_logs
+TO authenticated;
+
+REVOKE ALL ON public.products FROM anon;
+REVOKE ALL ON public.order_items FROM anon;
+REVOKE ALL ON public.order_items FROM authenticated;
+GRANT SELECT (
+  id, order_id, product_id, variant_id,
+  product_name_snapshot, product_slug_snapshot, product_line_snapshot,
+  variant_name_snapshot, image_url_snapshot,
+  quantity, unit_price, line_total, customization_notes, created_at
+) ON public.order_items TO authenticated;
+
+NOTIFY pgrst, 'reload schema';
+
+
+-- ==============================================================================
+-- Abadikala Fresh Flowers — Initial Seed Data (From Business Proposal)
 -- Safe to re-run (uses ON CONFLICT DO NOTHING).
 -- Contains ONLY official proposal products & editable business configuration stubs.
 -- NO fake orders, NO fake testimonials, NO fake ratings, NO invented policies.
@@ -1556,7 +1898,7 @@ INSERT INTO public.products (
     'Buket mungil manis dalam balutan plastik bening bersih, ramah di kantong namun tetap elegan.',
     'Dirangkai dengan bunga segar pilihan hari ini dalam balutan plastik bening modern dan pita satin lembut. Cocok untuk hadiah manis spontan, sidang, wisuda, maupun ungkapan perhatian sehari-hari.',
     'Bunga segar pilihan musiman, baby breath/filler lembut, wrapping plastik bening premium, pita satin.',
-    'Tinggi Â± 28â€“32 cm, lebar Â± 18â€“22 cm',
+    'Tinggi ± 28–32 cm, lebar ± 18–22 cm',
     'Simpan di tempat sejuk, hindari sinar matahari langsung, dan ganti air atau lembapkan kapas tangkai secara berkala.',
     'Estimasi pengerjaan dikonfirmasi sesuai jadwal operasional admin',
     75000.00, 'buket', 35000.00, FALSE, TRUE, 'Tulis nuansa warna pilihan atau pesan singkat kartu ucapan',
@@ -1570,7 +1912,7 @@ INSERT INTO public.products (
     'Rangkaian buket melimpah dengan teknik wrapping berlapis ala florist Korea yang romantis dan lembut.',
     'Menghadirkan komposisi bunga segar berukuran besar dengan palet warna hangat dan lapisan kertas wrapping Korea yang airy serta elegan. Menjadi pilihan istimewa untuk perayaan besar penuh makna.',
     'Bunga segar utama (mawar/musiman), dedaunan eucalyptus, kertas wrapping Korea berlapis, pita grosgrain/satin.',
-    'Tinggi Â± 48â€“55 cm, lebar Â± 35â€“42 cm',
+    'Tinggi ± 48–55 cm, lebar ± 35–42 cm',
     'Letakkan di ruang sejuk ber-AC, jauhkan dari panas berlebih, dan lepaskan wrapping jika ingin dipindahkan ke vas berair bersih.',
     'Disarankan pemesanan lebih awal sesuai ketersediaan bunga segar',
     200000.00, 'buket', 100000.00, FALSE, TRUE, 'Sebutkan tema warna dominan dan ucapan kartu tulisan tangan',
@@ -1584,8 +1926,8 @@ INSERT INTO public.products (
     'Layanan bunga meja segar berkala per bulan untuk memperhangat ruang kerja, kafe, atau rumah Anda.',
     'Hadirkan kesegaran alami setiap minggu tanpa repot. Paket langganan bulanan ini dirancang untuk meja resepsionis, ruang tamu, kantor, maupun ruang pribadi dengan kurasi bunga musiman terbaik.',
     'Kurasi bunga segar musiman berganti secara berkala, dedaunan alami, opsi penyesuaian vas.',
-    'Menyesuaikan ukuran meja (standar diameter rangkaian Â± 20â€“28 cm)',
-    'Ganti air vas setiap 2 hari sekali dan potong ujung batang Â±1 cm secara miring agar kesegaran bertahan lebih lama.',
+    'Menyesuaikan ukuran meja (standar diameter rangkaian ± 20–28 cm)',
+    'Ganti air vas setiap 2 hari sekali dan potong ujung batang ±1 cm secara miring agar kesegaran bertahan lebih lama.',
     'Jadwal pengantaran berkala disepakati bersama admin',
     350000.00, 'bulan', 180000.00, FALSE, TRUE, 'Tuliskan preferensi suasana warna ruangan dan hari pengantaran yang diinginkan',
     ARRAY['Hadiah personal', 'Hari Ibu'], TRUE, TRUE, FALSE, TRUE, TRUE,
@@ -1613,7 +1955,7 @@ INSERT INTO public.products (
     'Buket bunga kering artistik dengan tone lembut yang tidak layu dan mempercantik ruang dalam waktu lama.',
     'Terbuat dari bunga kering dan preserved pilihan dengan perpaduan warna hangat. Cocok bagi Anda yang menginginkan hadiah estetis yang dapat disimpan bertahun-tahun sebagai kenangan.',
     'Bunga kering pilihan, preserved hydrangea/baby breath, kertas wrapping natural/linen, pita kain.',
-    'Tinggi Â± 35â€“42 cm, lebar Â± 22â€“28 cm',
+    'Tinggi ± 35–42 cm, lebar ± 22–28 cm',
     'Simpan di ruangan kering, hindari area lembap dan sinar matahari langsung agar warna tetap awet.',
     'Estimasi pengerjaan dikonfirmasi melalui pengaturan operasional',
     120000.00, 'buket', 40000.00, FALSE, TRUE, 'Pilih nuansa warna (cream, dusty rose, burgundy, natural)',
@@ -1627,7 +1969,7 @@ INSERT INTO public.products (
     'Karya seni bunga pres asli dalam bingkai kaca minimalis untuk menyimpan keindahan botani selamanya.',
     'Setiap kelopak bunga dipres dengan cermat dan disusun secara artistik dalam bingkai kaca elegan. Sangat cocok sebagai dekorasi estetik maupun hadiah kenang-kenangan penuh makna.',
     'Bunga asli yang telah dipres, bingkai kayu/minimalis dengan kaca pelindung, opsi teks singkat.',
-    'Standar ukuran bingkai Â± 15Ã—20 cm atau 20Ã—25 cm',
+    'Standar ukuran bingkai ± 15×20 cm atau 20×25 cm',
     'Bersihkan kaca dengan kain mikrofiber kering. Hindari paparan matahari langsung terus-menerus.',
     'Memerlukan proses penyusunan detail sesuai antrean pengerjaan',
     175000.00, 'bingkai', 60000.00, FALSE, TRUE, 'Tuliskan nama/tanggal/kutipan singkat jika ingin ditambahkan pada bingkai',
@@ -1641,7 +1983,7 @@ INSERT INTO public.products (
     'Plakat akrilik jernih berpadu bunga pres asli dan stand kayu hangat untuk hadiah wisuda atau apresiasi.',
     'Menampilkan bunga asli yang dipres rapi pada lembar akrilik bening berkualitas, dilengkapi dudukan kayu minimalis. Modern, personal, dan tahan lama.',
     'Akrilik bening premium, bunga pres asli, dudukan kayu natural, personalisasi teks.',
-    'Standar Â± 15Ã—20 cm dengan stand kayu',
+    'Standar ± 15×20 cm dengan stand kayu',
     'Lap permukaan akrilik menggunakan kain lembut agar tidak tergores. Jauhkan dari panas tinggi.',
     'Memerlukan konfirmasi teks personalisasi sebelum dicetak/dirangkai',
     150000.00, 'plakat', 50000.00, FALSE, TRUE, 'Cantumkan nama, ucapan, dan tanggal yang ingin ditampilkan pada plakat',
@@ -1655,7 +1997,7 @@ INSERT INTO public.products (
     'Bingkai 3D berdimensi dalam untuk mengabadikan bunga kering bersama nama, gelar, dan momen pencapaian.',
     'Dirancang khusus untuk merayakan kelulusan, sidang, maupun momen pernikahan. Kedalaman bingkai shadow-box menjaga dimensi bunga tetap utuh dan mewah.',
     'Bingkai kayu shadow-box 3D dengan kaca, bunga kering/preserved pilihan, tipografi nama & gelar.',
-    'Standar Â± 20Ã—25 cm dengan kedalaman 4â€“5 cm',
+    'Standar ± 20×25 cm dengan kedalaman 4–5 cm',
     'Pajang di ruangan kering dan hindari kelembapan tinggi agar tekstur bunga tetap prima.',
     'Memerlukan konfirmasi ejaan nama dan gelar sebelum pengerjaan',
     275000.00, 'frame', 115000.00, FALSE, TRUE, 'Tulis nama lengkap beserta gelar serta tanggal momen yang ingin diabadikan',
@@ -1669,7 +2011,7 @@ INSERT INTO public.products (
     'Setangkai mawar awetan penuh keanggunan di dalam kubah kaca bening beralas kayu hangat.',
     'Terinspirasi dari simbol kasih sayang yang tak lekang oleh waktu. Mawar preserved dilindungi kubah kaca jernih sehingga tampil romantis sebagai hadiah anniversary, lamaran, atau ulang tahun.',
     'Mawar preserved pilihan, kubah kaca borosilikat/bening, alas kayu natural, filler dried moss/baby breath.',
-    'Tinggi kubah Â± 18â€“22 cm, diameter alas Â± 11â€“13 cm',
+    'Tinggi kubah ± 18–22 cm, diameter alas ± 11–13 cm',
     'Jangan membuka kubah kaca terlalu sering dan hindari menyentuh kelopak mawar secara langsung.',
     'Tersedia sesuai stok kubah kaca & mawar preserved',
     250000.00, 'set', 110000.00, FALSE, TRUE, 'Pilih warna mawar jika tersedia dan tulis pesan kartu ucapan',
@@ -1683,7 +2025,7 @@ INSERT INTO public.products (
     'Gantungan kunci resin bening buatan tangan berisi kelopak bunga asli yang dapat dibawa ke mana saja.',
     'Hadiah mungil yang personal dan terjangkau untuk sahabat, pelajar, mahasiswa, maupun suvenir acara. Setiap kepingan unik karena menggunakan kelopak bunga asli.',
     'Resin bening berkualitas, kelopak bunga asli terawetkan, aksen gold foil opsional, ring gantungan logam.',
-    'Diameter/panjang Â± 4â€“5 cm',
+    'Diameter/panjang ± 4–5 cm',
     'Hindari goresan benda tajam dan paparan panas ekstrem agar resin tetap jernih.',
     'Dikerjakan secara handmade sesuai antrean cetak resin',
     35000.00, 'pcs', 13000.00, FALSE, TRUE, 'Tulis pilihan inisial huruf atau nuansa warna kelopak (opsional)',
@@ -1697,7 +2039,7 @@ INSERT INTO public.products (
     'Pembatas buku transparan dengan susunan bunga pres lembut untuk menemani setiap halaman bacaan.',
     'Menyimpan ketenangan kelopak bunga asli di sela buku kesayangan Anda. Sangat terjangkau, manis, dan ideal untuk hadiah kecil, pelajar, mahasiswa, maupun pelengkap kado.',
     'Laminasi bening/resin tipis, bunga pres asli, rumbai tassel lembut.',
-    'Ukuran Â± 14Ã—4 cm',
+    'Ukuran ± 14×4 cm',
     'Simpan rata di dalam buku dan hindari lipatan agar bentuk tetap rapi.',
     'Dikerjakan secara handmade dengan detail rapi',
     25000.00, 'pcs', 8000.00, FALSE, TRUE, 'Pilih nuansa warna bunga (lembut/pastel/natural) jika tersedia',
@@ -1712,7 +2054,7 @@ INSERT INTO public.products (
     'Jangan biarkan buket dari momen terpenting dalam hidup Anda layu begitu saja. Tim Abadikala akan mengeringkan, mempres, dan menata ulang bunga dari buket Anda ke dalam bingkai atau karya kenangan yang abadi.',
     'Proses pengeringan & preservasi profesional menggunakan bunga asli dari buket pelanggan, media bingkai/display sesuai paket.',
     'Menyesuaikan ukuran bingkai & kondisi buket pelanggan',
-    'Kirimkan buket secepat mungkin setelah acara (idealnya 1â€“2 hari) agar warna dan bentuk kelopak tetap optimal.',
+    'Kirimkan buket secepat mungkin setelah acara (idealnya 1–2 hari) agar warna dan bentuk kelopak tetap optimal.',
     'Proses pengeringan & penataan membutuhkan waktu beberapa minggu (dikonfirmasi admin)',
     350000.00, 'layanan', 130000.00, FALSE, TRUE, 'Jelaskan jenis acara, tanggal acara, dan bentuk akhir yang diinginkan (bingkai/shadow-box)',
     ARRAY['Pernikahan', 'Lamaran', 'Wisuda', 'Anniversary'], TRUE, TRUE, TRUE, FALSE, TRUE,
@@ -1754,17 +2096,17 @@ WHERE NOT EXISTS (SELECT 1 FROM public.inventory i WHERE i.product_id = p.id);
 
 -- 5. Default Shipping Methods (Realistic Lhokseumawe operational setup)
 INSERT INTO public.shipping_methods (code, name, method_type, description, service_area, base_fee, estimated_duration, is_configured, is_active, sort_order) VALUES
-  ('local_delivery', 'Kurir Toko Area Lhokseumawe', 'delivery', 'Pengantaran langsung oleh kurir khusus Abadikala menjaga rangkaian bunga segar tetap utuh dan sejuk sampai tujuan.', 'Kota Lhokseumawe (Banda Sakti, Muara Dua, Muara Satu, Blang Mangat)', 15000.00, '1â€“2 jam setelah selesai dirangkai', TRUE, TRUE, 1),
-  ('store_pickup', 'Ambil di Studio (Pick-up)', 'pickup', 'Ambil langsung pesanan Anda di studio Abadikala Banda Sakti tanpa biaya ongkir sesuai jadwal.', 'Jl. Merdeka Barat No. 48, Simpang Empat, Banda Sakti, Lhokseumawe', 0.00, 'Setiap hari, 08.00â€“21.00 WIB', TRUE, TRUE, 2),
-  ('outer_city_preserved', 'Ekspedisi Luar Kota (Khusus Lini Abadi)', 'delivery', 'Pengiriman aman kotak kraft khusus produk bunga awetan ke seluruh Aceh dan luar kota.', 'Seluruh Aceh & Nasional (Khusus Lini Abadi)', 25000.00, '2â€“4 hari kerja', TRUE, TRUE, 3)
+  ('local_delivery', 'Kurir Toko Area Lhokseumawe', 'delivery', 'Pengantaran langsung oleh kurir khusus Abadikala menjaga rangkaian bunga segar tetap utuh dan sejuk sampai tujuan.', 'Kota Lhokseumawe (Banda Sakti, Muara Dua, Muara Satu, Blang Mangat)', 15000.00, '1–2 jam setelah selesai dirangkai', TRUE, TRUE, 1),
+  ('store_pickup', 'Ambil di Studio (Pick-up)', 'pickup', 'Ambil langsung pesanan Anda di studio Abadikala Banda Sakti tanpa biaya ongkir sesuai jadwal.', 'Jl. Merdeka Barat No. 48, Simpang Empat, Banda Sakti, Lhokseumawe', 0.00, 'Setiap hari, 08.00–21.00 WIB', TRUE, TRUE, 2),
+  ('outer_city_preserved', 'Ekspedisi Luar Kota (Khusus Lini Abadi)', 'delivery', 'Pengiriman aman kotak kraft khusus produk bunga awetan ke seluruh Aceh dan luar kota.', 'Seluruh Aceh & Nasional (Khusus Lini Abadi)', 25000.00, '2–4 hari kerja', TRUE, TRUE, 3)
 ON CONFLICT (code) DO NOTHING;
 
 -- 6. Homepage CMS Sections
 INSERT INTO public.homepage_sections (section_key, title, subtitle, content, is_active, sort_order) VALUES
-  ('announcement_bar', 'Abadikala Fresh Flowers â€” Lhokseumawe, Aceh', NULL, '{"text": "Segar Hari Ini, Abadi Selamanya â€¢ Pengiriman Area Lhokseumawe Rp15.000 & Gratis Pick-up di Studio Banda Sakti"}'::jsonb, TRUE, 1),
+  ('announcement_bar', 'Abadikala Fresh Flowers — Lhokseumawe, Aceh', NULL, '{"text": "Segar Hari Ini, Abadi Selamanya • Pengiriman Area Lhokseumawe Rp15.000 & Gratis Pick-up di Studio Banda Sakti"}'::jsonb, TRUE, 1),
   ('hero', 'Setiap Bunga Punya Cerita.', 'Rayakan momen berharga dengan rangkaian bunga segar dan kenangan indah yang dapat diabadikan bersama Abadikala di Lhokseumawe, Aceh.', '{"primary_cta_label": "Belanja Sekarang", "primary_cta_url": "/shop", "secondary_cta_label": "Jelajahi Koleksi", "secondary_cta_url": "/koleksi/fresh", "image_url": "/images/hero-abadikala.jpg"}'::jsonb, TRUE, 2),
-  ('brand_intro', 'Satu bunga, dua bentuk keindahan.', 'Makna Abadikala berasal dari "abadi" dan "kala"â€”waktu yang diabadikan. Kami percaya bunga bukan sekadar hadiah sesaat, tetapi cara lembut untuk menyampaikan rasa dan menyimpan kenangan.', '{"fresh_title": "Lini Segar", "fresh_desc": "Bunga segar pilihan untuk dinikmati keharumannya hari iniâ€”hadir dengan tampilan elegan dan harga yang tetap bersahabat.", "preserved_title": "Lini Abadi", "preserved_desc": "Bunga awetan, pressed flower, hingga jasa pengawetan buket agar momen terindah Anda dapat terus disimpan."}'::jsonb, TRUE, 3),
-  ('brand_story', 'Dari Segar Menjadi Abadi.', 'Setiap tangkai bunga memiliki nilai yang terlalu indah untuk berakhir begitu saja.', '{"paragraphs": ["Di Abadikala, kami merawat siklus keindahan bunga secara penuh makna. Bunga segar yang penuh keharuman hari iniâ€”baik dari kurasi studio kami maupun buket berharga milik pelangganâ€”dapat diolah melalui proses pengeringan dan preservasi menjadi karya seni awetan.", "Melalui pendekatan ini, Anda tidak hanya menghadirkan kebahagiaan di hari perayaan, tetapi juga menyimpan wujud nyata kenangan tersebut untuk tahun-tahun mendatang."], "image_url": "/images/product-jasa-pengawetan.jpg"}'::jsonb, TRUE, 4),
+  ('brand_intro', 'Satu bunga, dua bentuk keindahan.', 'Makna Abadikala berasal dari "abadi" dan "kala"—waktu yang diabadikan. Kami percaya bunga bukan sekadar hadiah sesaat, tetapi cara lembut untuk menyampaikan rasa dan menyimpan kenangan.', '{"fresh_title": "Lini Segar", "fresh_desc": "Bunga segar pilihan untuk dinikmati keharumannya hari ini—hadir dengan tampilan elegan dan harga yang tetap bersahabat.", "preserved_title": "Lini Abadi", "preserved_desc": "Bunga awetan, pressed flower, hingga jasa pengawetan buket agar momen terindah Anda dapat terus disimpan."}'::jsonb, TRUE, 3),
+  ('brand_story', 'Dari Segar Menjadi Abadi.', 'Setiap tangkai bunga memiliki nilai yang terlalu indah untuk berakhir begitu saja.', '{"paragraphs": ["Di Abadikala, kami merawat siklus keindahan bunga secara penuh makna. Bunga segar yang penuh keharuman hari ini—baik dari kurasi studio kami maupun buket berharga milik pelanggan—dapat diolah melalui proses pengeringan dan preservasi menjadi karya seni awetan.", "Melalui pendekatan ini, Anda tidak hanya menghadirkan kebahagiaan di hari perayaan, tetapi juga menyimpan wujud nyata kenangan tersebut untuk tahun-tahun mendatang."], "image_url": "/images/product-jasa-pengawetan.jpg"}'::jsonb, TRUE, 4),
   ('newsletter', 'Kabar Hangat dari Studio Abadikala', 'Daftarkan email Anda untuk informasi koleksi musiman, promo wisuda, dan tips merawat bunga.', '{"enabled": true}'::jsonb, TRUE, 5)
 ON CONFLICT (section_key) DO NOTHING;
 
@@ -1775,7 +2117,7 @@ INSERT INTO public.galleries (id, title, caption, image_url, external_link, cate
   ('55555555-5555-4555-8555-555555555503', 'Bingkai Pressed Flower', 'Kelopak bunga asli yang dipres rapi dalam bingkai kayu & kaca.', '/images/product-pressed-frame.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 3),
   ('55555555-5555-4555-8555-555555555504', 'Mawar Kubah Kaca', 'Keindahan mawar awetan sebagai simbol kenangan abadi.', '/images/product-mawar-kubah.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 4),
   ('55555555-5555-4555-8555-555555555505', 'Shadow-Box Wisuda Personal', 'Mawar kering berdimensi 3D lengkap dengan nama dan gelar kelulusan.', '/images/product-shadow-box.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 5),
-  ('55555555-5555-4555-8555-555555555506', 'Flower Bar Studio Banda Sakti', 'Pilih bungamu sendiriâ€”mawar, krisan, aster, gerbera, dan baby breath segar.', '/images/product-flower-bar.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 6),
+  ('55555555-5555-4555-8555-555555555506', 'Flower Bar Studio Banda Sakti', 'Pilih bungamu sendiri—mawar, krisan, aster, gerbera, dan baby breath segar.', '/images/product-flower-bar.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 6),
   ('55555555-5555-4555-8555-555555555507', 'Suvenir Resin & Pembatas Buku', 'Kelopak bunga asli terawetkan dalam resin bening, kado manis untuk sahabat.', '/images/product-resin-craft.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 7),
   ('55555555-5555-4555-8555-555555555508', 'Meja Kerja Pengawetan Buket', 'Proses teliti mengubah buket hari spesial menjadi bingkai kenangan.', '/images/product-jasa-pengawetan.jpg', 'https://instagram.com/abadikalaflowers', 'Jasa Pengawetan', TRUE, 8)
 ON CONFLICT (id) DO NOTHING;
@@ -1791,11 +2133,11 @@ ON CONFLICT (id) DO NOTHING;
 -- 8. Business Settings (Complete Realistic Lhokseumawe Florist Setup + FAQs)
 INSERT INTO public.business_settings (setting_key, setting_group, value, is_configured, is_public) VALUES
   ('brand_identity', 'general', '{"business_name": "Abadikala Fresh Flowers", "short_name": "Abadikala", "tagline": "Segar Hari Ini, Abadi Selamanya", "city": "Lhokseumawe, Aceh, Indonesia", "logo_url": ""}'::jsonb, TRUE, TRUE),
-  ('contact_info', 'contact', '{"address": "Jl. Merdeka Barat No. 48, Simpang Empat, Kec. Banda Sakti, Kota Lhokseumawe, Aceh 24351", "whatsapp": "+62 822-7410-8820", "email": "halo@abadikalaflowers.id", "operational_hours": "Seninâ€“Minggu, 08.00â€“21.00 WIB"}'::jsonb, TRUE, TRUE),
+  ('contact_info', 'contact', '{"address": "Jl. Merdeka Barat No. 48, Simpang Empat, Kec. Banda Sakti, Kota Lhokseumawe, Aceh 24351", "whatsapp": "+62 822-7410-8820", "email": "halo@abadikalaflowers.id", "operational_hours": "Senin–Minggu, 08.00–21.00 WIB"}'::jsonb, TRUE, TRUE),
   ('social_links', 'social', '{"instagram": "https://instagram.com/abadikalaflowers", "tiktok": "https://tiktok.com/@abadikalaflowers", "facebook": "https://facebook.com/abadikalaflowers"}'::jsonb, TRUE, TRUE),
-  ('delivery_policy', 'operations', '{"service_areas": "Kota Lhokseumawe (Banda Sakti, Muara Dua, Muara Satu, Blang Mangat) & ekspedisi seluruh Indonesia khusus Lini Abadi", "courier_info": "Kurir Toko Khusus Abadikala (Rp15.000) & Pick-up di Studio (Rp0)", "min_order_amount": 25000, "preorder_lead_time": "Minimal H-1 buket segar custom & H-3 produk personalisasi Lini Abadi (same-day sebelum pukul 14.00 WIB)", "processing_time": "Buket segar 1â€“3 jam â€¢ Lini Abadi 2â€“5 hari kerja â€¢ Jasa pengawetan 14â€“21 hari kerja", "pickup_available": true}'::jsonb, TRUE, TRUE),
-  ('payment_config', 'payment', '{"manual_transfer_enabled": true, "payment_gateway_enabled": false, "bank_accounts": [{"bank_name": "Bank Syariah Indonesia (BSI)", "account_number": "7189 4025 18", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}, {"bank_name": "Bank Central Asia (BCA)", "account_number": "8240 5192 73", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}], "payment_instructions": "Lakukan transfer sesuai nominal total pesanan ke rekening resmi BSI atau BCA, lalu unggah bukti transfer melalui halaman konfirmasi pesanan. Verifikasi maksimal 1x30 menit pada jam operasional (08.00â€“21.00 WIB)."}'::jsonb, TRUE, TRUE),
+  ('delivery_policy', 'operations', '{"service_areas": "Kota Lhokseumawe (Banda Sakti, Muara Dua, Muara Satu, Blang Mangat) & ekspedisi seluruh Indonesia khusus Lini Abadi", "courier_info": "Kurir Toko Khusus Abadikala (Rp15.000) & Pick-up di Studio (Rp0)", "min_order_amount": 25000, "preorder_lead_time": "Minimal H-1 buket segar custom & H-3 produk personalisasi Lini Abadi (same-day sebelum pukul 14.00 WIB)", "processing_time": "Buket segar 1–3 jam • Lini Abadi 2–5 hari kerja • Jasa pengawetan 14–21 hari kerja", "pickup_available": true}'::jsonb, TRUE, TRUE),
+  ('payment_config', 'payment', '{"manual_transfer_enabled": true, "payment_gateway_enabled": false, "bank_accounts": [{"bank_name": "Bank Syariah Indonesia (BSI)", "account_number": "7189 4025 18", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}, {"bank_name": "Bank Central Asia (BCA)", "account_number": "8240 5192 73", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}], "payment_instructions": "Lakukan transfer sesuai nominal total pesanan ke rekening resmi BSI atau BCA, lalu unggah bukti transfer melalui halaman konfirmasi pesanan. Verifikasi maksimal 1x30 menit pada jam operasional (08.00–21.00 WIB)."}'::jsonb, TRUE, TRUE),
   ('personalized_services', 'services', '{"handwritten_card": true, "custom_bouquet": true, "color_request": true, "bouquet_preservation": true, "gift_arrangement": true}'::jsonb, TRUE, TRUE),
   ('legal_drafts', 'legal', '{"is_final": true, "privacy_policy": "Abadikala Fresh Flowers melindungi seluruh data pribadi pelanggan (nama, email, WhatsApp, alamat pengiriman, serta isi kartu ucapan) dan hanya menggunakannya untuk pemrosesan pesanan serta layanan pelanggan.", "terms_conditions": "Setiap rangkaian bunga dirangkai segar saat dipesan. Ketersediaan jenis bunga musiman dapat menyesuaikan stok harian dengan nuansa warna dan kualitas setara melalui konfirmasi admin.", "shipping_policy": "Pengantaran Kurir Toko area Kota Lhokseumawe Rp15.000, Pick-up di Studio Banda Sakti Rp0, serta pengiriman luar kota khusus Lini Abadi Rp25.000 via ekspedisi aman kotak kraft.", "cancellation_policy": "Pembatalan sebelum pembayaran diverifikasi bebas biaya. Pesanan Lini Segar terbayar dapat dibatalkan maksimal H-1 sebelum dirangkai. Garansi penggantian berlaku maksimal 3 jam setelah paket diterima dengan bukti foto."}'::jsonb, TRUE, TRUE),
-  ('faqs', 'cms', '[{"id":"faq-1","category":"Produk & Lini","question":"Apa perbedaan Lini Segar dan Lini Abadi di Abadikala?","answer":"Lini Segar menghadirkan rangkaian bunga segar pilihan untuk dinikmati hari ini (buket kecil, buket Korea, bunga meja langganan, Flower Bar). Lini Abadi menghadirkan produk bunga awetan seperti buket kering, pressed flower, plakat akrilik, shadow-box, mawar kubah kaca, suvenir resin, serta jasa pengawetan buket.","is_active":true},{"id":"faq-2","category":"Pemesanan & Pre-Order","question":"Apakah bisa pesan mendadak (same-day) di area Lhokseumawe?","answer":"Bisa! Untuk buket bunga segar, pesanan same-day dilayani hingga pukul 14.00 WIB sesuai stok harian. Custom bouquet disarankan H-1 dan produk personalisasi Lini Abadi minimal H-3.","is_active":true},{"id":"faq-3","category":"Pengiriman","question":"Berapa ongkos kirim di Lhokseumawe dan apakah bisa kirim ke luar kota?","answer":"Tarif Kurir Toko area Kota Lhokseumawe Rp15.000 flat, atau Pick-up Gratis di studio Jl. Merdeka Barat No. 48, Banda Sakti. Produk Lini Abadi dapat dikirim ke luar kota via ekspedisi Rp25.000.","is_active":true},{"id":"faq-4","category":"Pembayaran","question":"Metode pembayaran apa saja yang tersedia?","answer":"Transfer Bank Syariah Indonesia (BSI) dan BCA. Unggah bukti transfer pada halaman konfirmasi pesanan untuk diverifikasi admin maksimal 1x30 menit (08.00â€“21.00 WIB).","is_active":true},{"id":"faq-5","category":"Pengawetan Buket","question":"Kapan waktu terbaik menyerahkan buket untuk Jasa Pengawetan Buket?","answer":"Idealnya 1â€“2 hari setelah acara (wisuda, lamaran, atau pernikahan) saat kelopak masih segar. Proses pengeringan & penyusunan bingkai membutuhkan 14â€“21 hari kerja.","is_active":true}]'::jsonb, TRUE, TRUE)
+  ('faqs', 'cms', '[{"id":"faq-1","category":"Produk & Lini","question":"Apa perbedaan Lini Segar dan Lini Abadi di Abadikala?","answer":"Lini Segar menghadirkan rangkaian bunga segar pilihan untuk dinikmati hari ini (buket kecil, buket Korea, bunga meja langganan, Flower Bar). Lini Abadi menghadirkan produk bunga awetan seperti buket kering, pressed flower, plakat akrilik, shadow-box, mawar kubah kaca, suvenir resin, serta jasa pengawetan buket.","is_active":true},{"id":"faq-2","category":"Pemesanan & Pre-Order","question":"Apakah bisa pesan mendadak (same-day) di area Lhokseumawe?","answer":"Bisa! Untuk buket bunga segar, pesanan same-day dilayani hingga pukul 14.00 WIB sesuai stok harian. Custom bouquet disarankan H-1 dan produk personalisasi Lini Abadi minimal H-3.","is_active":true},{"id":"faq-3","category":"Pengiriman","question":"Berapa ongkos kirim di Lhokseumawe dan apakah bisa kirim ke luar kota?","answer":"Tarif Kurir Toko area Kota Lhokseumawe Rp15.000 flat, atau Pick-up Gratis di studio Jl. Merdeka Barat No. 48, Banda Sakti. Produk Lini Abadi dapat dikirim ke luar kota via ekspedisi Rp25.000.","is_active":true},{"id":"faq-4","category":"Pembayaran","question":"Metode pembayaran apa saja yang tersedia?","answer":"Transfer Bank Syariah Indonesia (BSI) dan BCA. Unggah bukti transfer pada halaman konfirmasi pesanan untuk diverifikasi admin maksimal 1x30 menit (08.00–21.00 WIB).","is_active":true},{"id":"faq-5","category":"Pengawetan Buket","question":"Kapan waktu terbaik menyerahkan buket untuk Jasa Pengawetan Buket?","answer":"Idealnya 1–2 hari setelah acara (wisuda, lamaran, atau pernikahan) saat kelopak masih segar. Proses pengeringan & penyusunan bingkai membutuhkan 14–21 hari kerja.","is_active":true}]'::jsonb, TRUE, TRUE)
 ON CONFLICT (setting_key) DO NOTHING;

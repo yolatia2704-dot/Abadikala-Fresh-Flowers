@@ -314,6 +314,9 @@ export async function fetchShippingMethods(includeUnconfigured = false): Promise
 // CHECKOUT, ORDERS & TRACKING
 // ============================================================================
 
+const ORDER_ITEM_SAFE_COLUMNS =
+  'id, order_id, product_id, variant_id, product_name_snapshot, product_slug_snapshot, product_line_snapshot, variant_name_snapshot, image_url_snapshot, quantity, unit_price, line_total, customization_notes';
+
 export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase.rpc('create_order_from_checkout', {
@@ -346,9 +349,9 @@ export async function createOrder(payload: CreateOrderPayload): Promise<Order> {
     const createdId = data.order_id as string;
     const { data: orderData, error: fetchErr } = await supabase
       .from('orders')
-      .select('*, order_items(*), order_status_history(*), payments(*)')
+      .select(`*, order_items(${ORDER_ITEM_SAFE_COLUMNS}), order_status_history(*), payments(*)`)
       .eq('id', createdId)
-      .single();
+      .maybeSingle();
     if (fetchErr || !orderData) {
       return {
         id: createdId,
@@ -540,22 +543,15 @@ export async function submitPaymentProof(
   proofDataUrl: string | null
 ): Promise<void> {
   if (isSupabaseConfigured && supabase) {
-    const { data: ord, error: oErr } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('order_number', orderNumber)
-      .single();
-    if (oErr || !ord) throw new Error('Pesanan tidak ditemukan.');
-    // Notice: customer only submits proof; status moves to awaiting_verification, NEVER confirmed.
-    await supabase
-      .from('payments')
-      .update({
-        sender_name: sanitizeText(senderName),
-        sender_reference: sanitizeText(senderReference),
-        proof_image_url: proofDataUrl,
-        status: 'awaiting_verification',
-      })
-      .eq('order_id', ord.id);
+    // Works for both Guest Checkout (anon) and logged-in customers via SECURITY DEFINER RPC.
+    // Strictly moves payment status to awaiting_verification (NEVER auto-confirmed).
+    const { error } = await supabase.rpc('submit_payment_proof_public', {
+      p_order_number: orderNumber,
+      p_sender_name: sanitizeText(senderName),
+      p_sender_reference: senderReference ? sanitizeText(senderReference) : null,
+      p_proof_image_url: proofDataUrl,
+    });
+    if (error) throw new Error(error.message);
     return;
   }
 
@@ -1164,7 +1160,7 @@ export async function fetchAdminOrders(): Promise<Order[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('orders')
-      .select('*, order_items(*), order_status_history(*), payments(*)')
+      .select(`*, order_items(${ORDER_ITEM_SAFE_COLUMNS}), order_status_history(*), payments(*)`)
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     return (data || []).map((row) => ({
@@ -1508,6 +1504,20 @@ export async function convertCustomOrderToOrder(
   customOrderId: string,
   actor: { email: string; role: AppRole }
 ): Promise<Order> {
+  if (isSupabaseConfigured && supabase) {
+    const { data, error } = await supabase.rpc('admin_convert_custom_order_to_order', {
+      p_custom_order_id: customOrderId,
+    });
+    if (error) throw new Error(error.message);
+    const orders = await fetchAdminOrders();
+    const created = orders.find((o) => o.id === data.order_id);
+    if (created) return created;
+    return {
+      id: data.order_id,
+      order_number: data.order_number,
+    } as Order;
+  }
+
   const db = readLocalDb();
   const co = db.custom_orders.find((c) => c.id === customOrderId);
   if (!co) throw new Error('Custom order tidak ditemukan.');
@@ -1830,15 +1840,15 @@ export async function deleteTestimonial(
 
 export async function fetchAuditLogs(): Promise<AuditLog[]> {
   if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .select('*, profiles(email)')
-      .order('created_at', { ascending: false })
-      .limit(100);
+    const [{ data, error }, { data: profiles }] = await Promise.all([
+      supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(100),
+      supabase.from('profiles').select('id, email'),
+    ]);
     if (error) throw new Error(error.message);
+    const emailMap = new Map((profiles || []).map((p) => [p.id, p.email]));
     return (data || []).map((row) => ({
       id: row.id,
-      actor_email: row.profiles?.email || 'system',
+      actor_email: (row.actor_id ? emailMap.get(row.actor_id) : null) || 'system',
       actor_role: row.actor_role || 'admin',
       action: row.action,
       entity_type: row.entity_type,

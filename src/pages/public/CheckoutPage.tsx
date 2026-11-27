@@ -6,7 +6,9 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Check,
   CheckCircle2,
+  Copy,
   CreditCard,
   Gift,
   MapPin,
@@ -51,6 +53,19 @@ export function CheckoutPage() {
   const [proofFileUrl, setProofFileUrl] = useState<string | null>(null);
   const [proofSubmitted, setProofSubmitted] = useState(false);
   const [submittingProof, setSubmittingProof] = useState(false);
+  const [copiedAccount, setCopiedAccount] = useState<string | null>(null);
+
+  const handleCopyAccount = async (bankName: string, accountNumber: string) => {
+    const clean = accountNumber.replace(/\s+/g, '');
+    try {
+      await navigator.clipboard.writeText(clean);
+      setCopiedAccount(accountNumber);
+      showToast(`Nomor rekening ${bankName} berhasil disalin!`);
+      setTimeout(() => setCopiedAccount(null), 2500);
+    } catch {
+      showToast(`Nomor rekening ${bankName}: ${accountNumber}`, 'info');
+    }
+  };
 
   const activeMethods = shippingMethods || [];
   const defaultFulfillment =
@@ -256,9 +271,16 @@ export function CheckoutPage() {
               {/* STEP 1: CUSTOMER INFO */}
               {step === 1 && (
                 <div className="space-y-5">
-                  <h2 className="font-serif text-3xl font-semibold text-ink-primary">
-                    1. Informasi Pelanggan
-                  </h2>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="font-serif text-3xl font-semibold text-ink-primary">
+                      1. Informasi Pelanggan
+                    </h2>
+                    {!user && (
+                      <span className="rounded-full bg-brand-sage-soft px-3 py-1 text-[11px] font-medium text-brand-sage">
+                        Guest Checkout Aktif (Tanpa Wajib Login)
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-ink-secondary">
@@ -516,13 +538,33 @@ export function CheckoutPage() {
                           {bankAccounts.map((acc, idx) => (
                             <div
                               key={idx}
-                              className="rounded-xl border border-line-subtle bg-surface-card p-3 text-xs"
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line-subtle bg-surface-card p-3 text-xs"
                             >
-                              <p className="font-semibold text-ink-primary">{acc.bank_name}</p>
-                              <p className="font-mono text-sm text-brand-primary">
-                                {acc.account_number}
-                              </p>
-                              <p className="text-ink-secondary">a.n. {acc.account_holder}</p>
+                              <div>
+                                <p className="font-semibold text-ink-primary">{acc.bank_name}</p>
+                                <p className="font-mono text-sm font-semibold text-brand-primary">
+                                  {acc.account_number}
+                                </p>
+                                <p className="text-ink-secondary">a.n. {acc.account_holder}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  handleCopyAccount(acc.bank_name, acc.account_number);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-brand-primary/30 bg-brand-blush/50 px-3 py-1.5 text-[11px] font-semibold text-brand-primary transition-colors hover:bg-brand-primary hover:text-white"
+                              >
+                                {copiedAccount === acc.account_number ? (
+                                  <>
+                                    <Check className="h-3.5 w-3.5" /> Tersalin
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3.5 w-3.5" /> Salin No. Rek
+                                  </>
+                                )}
+                              </button>
                             </div>
                           ))}
                         </div>
@@ -661,6 +703,47 @@ export function CheckoutPage() {
                     </p>
                   </div>
                 </div>
+
+                {bankAccounts.length > 0 && (
+                  <div className="mt-6 border-t border-line-subtle pt-5 text-left">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-secondary">
+                      Rekening Transfer Resmi Abadikala
+                    </p>
+                    <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {bankAccounts.map((acc, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between gap-2 rounded-xl border border-line-subtle bg-surface-base p-3 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-semibold text-ink-primary">{acc.bank_name}</p>
+                            <p className="font-mono text-sm font-semibold text-brand-primary">
+                              {acc.account_number}
+                            </p>
+                            <p className="truncate text-[11px] text-ink-secondary">
+                              a.n. {acc.account_holder}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyAccount(acc.bank_name, acc.account_number)}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-brand-primary/30 bg-brand-blush/50 px-2.5 py-1.5 text-[11px] font-semibold text-brand-primary hover:bg-brand-primary hover:text-white"
+                          >
+                            {copiedAccount === acc.account_number ? (
+                              <>
+                                <Check className="h-3 w-3" /> Tersalin
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3 w-3" /> Salin
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Manual Payment Proof Upload (Never auto-confirms) */}

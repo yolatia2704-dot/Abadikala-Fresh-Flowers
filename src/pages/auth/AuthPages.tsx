@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ShieldCheck, KeyRound } from 'lucide-react';
 import { BrandLogo } from '@/components/common/BrandLogo';
-import { useAuth } from '@/contexts/AuthContext';
+import { translateAuthError, useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { usePageTitle } from '@/hooks/useStoreQueries';
 import { isSupabaseConfigured, supabase } from '@/lib/supabase';
@@ -229,7 +229,7 @@ export function ForgotPasswordPage() {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
           redirectTo: `${window.location.origin}/login`,
         });
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(translateAuthError(error.message));
       }
       setSent(true);
       showToast('Permintaan reset kata sandi telah diproses.', 'info');
@@ -300,7 +300,12 @@ export function AdminLoginPage() {
   const onSubmit = async (values: LoginFormValues) => {
     setSubmitting(true);
     try {
-      await signIn(values.email, values.password);
+      const signedInUser = await signIn(values.email, values.password);
+      if (signedInUser && !['super_admin', 'admin', 'staff'].includes(signedInUser.role)) {
+        showToast('Akun ini tidak memiliki hak akses Dashboard Admin.', 'error');
+        return;
+      }
+      showToast('Selamat datang di Dashboard Admin Abadikala.');
       navigate('/admin', { replace: true });
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Gagal masuk ke dashboard admin.', 'error');

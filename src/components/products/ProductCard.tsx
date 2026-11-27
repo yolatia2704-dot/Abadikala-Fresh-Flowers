@@ -45,6 +45,12 @@ export function ProductCard({ product }: { product: PublicProduct }) {
             src={primaryImage}
             alt={product.images[0]?.alt_text || product.name}
             loading="lazy"
+            onError={(e) => {
+              if (!e.currentTarget.dataset.fallback) {
+                e.currentTarget.dataset.fallback = '1';
+                e.currentTarget.src = '/images/hero-abadikala.jpg';
+              }
+            }}
             className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
           />
         </Link>
