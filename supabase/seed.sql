@@ -196,25 +196,34 @@ INSERT INTO public.products (
   )
 ON CONFLICT (slug) DO NOTHING;
 
--- 3. Product Images
-INSERT INTO public.product_images (product_id, image_url, alt_text, is_primary, sort_order) VALUES
-  ('22222222-2222-4222-8222-222222222201', '/images/product-buket-kecil.jpg', 'Buket Kecil Plastik Bening Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222202', '/images/product-buket-korea.jpg', 'Buket Besar Gaya Korea Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222203', '/images/product-bunga-meja.jpg', 'Bunga Meja Langganan Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222204', '/images/product-flower-bar.jpg', 'Flower Bar Abadikala Fresh Flowers', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222205', '/images/product-buket-kering.jpg', 'Buket Bunga Kering Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222206', '/images/product-pressed-frame.jpg', 'Bingkai Pressed Flower Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222207', '/images/product-plakat-akrilik.jpg', 'Plakat Akrilik Bunga Pres Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222208', '/images/product-shadow-box.jpg', 'Shadow-Box Nama dan Gelar Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222209', '/images/product-mawar-kubah.jpg', 'Mawar Kubah Kaca Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222210', '/images/product-resin-craft.jpg', 'Gantungan Kunci Resin Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222211', '/images/product-resin-craft.jpg', 'Pembatas Buku Bunga Pres Abadikala', TRUE, 1),
-  ('22222222-2222-4222-8222-222222222212', '/images/product-jasa-pengawetan.jpg', 'Jasa Pengawetan Buket Abadikala', TRUE, 1)
-ON CONFLICT DO NOTHING;
+-- 3. Product Images (deterministic UUIDs for 100% idempotent re-runs)
+INSERT INTO public.product_images (id, product_id, image_url, alt_text, is_primary, sort_order) VALUES
+  ('33333333-3333-4333-8333-333333333301', '22222222-2222-4222-8222-222222222201', '/images/product-buket-kecil.jpg', 'Buket Kecil Plastik Bening Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333302', '22222222-2222-4222-8222-222222222202', '/images/product-buket-korea.jpg', 'Buket Besar Gaya Korea Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333313', '22222222-2222-4222-8222-222222222202', '/images/lini-segar.jpg', 'Detail Wrapping Buket Gaya Korea', FALSE, 2),
+  ('33333333-3333-4333-8333-333333333303', '22222222-2222-4222-8222-222222222203', '/images/product-bunga-meja.jpg', 'Bunga Meja Langganan Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333304', '22222222-2222-4222-8222-222222222204', '/images/product-flower-bar.jpg', 'Flower Bar Abadikala Fresh Flowers', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333305', '22222222-2222-4222-8222-222222222205', '/images/product-buket-kering.jpg', 'Buket Bunga Kering Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333306', '22222222-2222-4222-8222-222222222206', '/images/product-pressed-frame.jpg', 'Bingkai Pressed Flower Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333307', '22222222-2222-4222-8222-222222222207', '/images/product-plakat-akrilik.jpg', 'Plakat Akrilik Bunga Pres Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333308', '22222222-2222-4222-8222-222222222208', '/images/product-shadow-box.jpg', 'Shadow-Box Nama dan Gelar Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333309', '22222222-2222-4222-8222-222222222209', '/images/product-mawar-kubah.jpg', 'Mawar Kubah Kaca Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333310', '22222222-2222-4222-8222-222222222210', '/images/product-resin-craft.jpg', 'Gantungan Kunci Resin Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333311', '22222222-2222-4222-8222-222222222211', '/images/product-resin-craft.jpg', 'Pembatas Buku Bunga Pres Abadikala', TRUE, 1),
+  ('33333333-3333-4333-8333-333333333312', '22222222-2222-4222-8222-222222222212', '/images/product-jasa-pengawetan.jpg', 'Jasa Pengawetan Buket Abadikala', TRUE, 1)
+ON CONFLICT (id) DO NOTHING;
 
--- 4. Inventory records (marked is_stock_configured = FALSE until admin inputs actual stock)
+-- 3b. Product Variants
+INSERT INTO public.product_variants (id, product_id, name, sku, price_delta, is_active, sort_order) VALUES
+  ('44444444-4444-4444-8444-444444444401', '22222222-2222-4222-8222-222222222201', 'Nuansa Blush & Cream', 'ABK-FR-001-BL', 0, TRUE, 1),
+  ('44444444-4444-4444-8444-444444444402', '22222222-2222-4222-8222-222222222201', 'Nuansa Burgundy & Putih', 'ABK-FR-001-BG', 0, TRUE, 2),
+  ('44444444-4444-4444-8444-444444444403', '22222222-2222-4222-8222-222222222202', 'Soft Dusty Rose & Ivory', 'ABK-FR-002-DR', 0, TRUE, 1),
+  ('44444444-4444-4444-8444-444444444404', '22222222-2222-4222-8222-222222222202', 'Romantic Burgundy', 'ABK-FR-002-BG', 0, TRUE, 2)
+ON CONFLICT (id) DO NOTHING;
+
+-- 4. Inventory records (configured initial stock, editable via Admin)
 INSERT INTO public.inventory (item_type, product_id, unit, stock_quantity, low_stock_threshold, is_stock_configured, notes)
-SELECT 'product', p.id, COALESCE(p.price_unit, 'pcs'), 0, 5, FALSE, 'Stok aktual belum dikonfigurasi admin (made-to-order aktif).'
+SELECT 'product', p.id, COALESCE(p.price_unit, 'pcs'), 15, 5, TRUE, 'Stok awal studio Banda Sakti, Lhokseumawe.'
 FROM public.products p
 WHERE NOT EXISTS (SELECT 1 FROM public.inventory i WHERE i.product_id = p.id);
 
@@ -234,27 +243,27 @@ INSERT INTO public.homepage_sections (section_key, title, subtitle, content, is_
   ('newsletter', 'Kabar Hangat dari Studio Abadikala', 'Daftarkan email Anda untuk informasi koleksi musiman, promo wisuda, dan tips merawat bunga.', '{"enabled": true}'::jsonb, TRUE, 5)
 ON CONFLICT (section_key) DO NOTHING;
 
--- 7. Curated Initial Gallery
-INSERT INTO public.galleries (title, caption, image_url, external_link, category_tag, is_active, sort_order) VALUES
-  ('Rangkaian Editorial Abadikala', 'Harmoni mawar blush, ranunculus burgundy, dan eucalyptus segar.', '/images/hero-abadikala.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 1),
-  ('Buket Besar Gaya Korea', 'Lapisan kertas lembut dengan komposisi bunga segar melimpah.', '/images/product-buket-korea.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 2),
-  ('Bingkai Pressed Flower', 'Kelopak bunga asli yang dipres rapi dalam bingkai kayu & kaca.', '/images/product-pressed-frame.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 3),
-  ('Mawar Kubah Kaca', 'Keindahan mawar awetan sebagai simbol kenangan abadi.', '/images/product-mawar-kubah.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 4),
-  ('Shadow-Box Wisuda Personal', 'Mawar kering berdimensi 3D lengkap dengan nama dan gelar kelulusan.', '/images/product-shadow-box.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 5),
-  ('Flower Bar Studio Banda Sakti', 'Pilih bungamu sendiri—mawar, krisan, aster, gerbera, dan baby breath segar.', '/images/product-flower-bar.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 6),
-  ('Suvenir Resin & Pembatas Buku', 'Kelopak bunga asli terawetkan dalam resin bening, kado manis untuk sahabat.', '/images/product-resin-craft.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 7),
-  ('Meja Kerja Pengawetan Buket', 'Proses teliti mengubah buket hari spesial menjadi bingkai kenangan.', '/images/product-jasa-pengawetan.jpg', 'https://instagram.com/abadikalaflowers', 'Jasa Pengawetan', TRUE, 8)
-ON CONFLICT DO NOTHING;
+-- 7. Curated Initial Gallery (deterministic UUIDs)
+INSERT INTO public.galleries (id, title, caption, image_url, external_link, category_tag, is_active, sort_order) VALUES
+  ('55555555-5555-4555-8555-555555555501', 'Rangkaian Editorial Abadikala', 'Harmoni mawar blush, ranunculus burgundy, dan eucalyptus segar.', '/images/hero-abadikala.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 1),
+  ('55555555-5555-4555-8555-555555555502', 'Buket Besar Gaya Korea', 'Lapisan kertas lembut dengan komposisi bunga segar melimpah.', '/images/product-buket-korea.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 2),
+  ('55555555-5555-4555-8555-555555555503', 'Bingkai Pressed Flower', 'Kelopak bunga asli yang dipres rapi dalam bingkai kayu & kaca.', '/images/product-pressed-frame.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 3),
+  ('55555555-5555-4555-8555-555555555504', 'Mawar Kubah Kaca', 'Keindahan mawar awetan sebagai simbol kenangan abadi.', '/images/product-mawar-kubah.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 4),
+  ('55555555-5555-4555-8555-555555555505', 'Shadow-Box Wisuda Personal', 'Mawar kering berdimensi 3D lengkap dengan nama dan gelar kelulusan.', '/images/product-shadow-box.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 5),
+  ('55555555-5555-4555-8555-555555555506', 'Flower Bar Studio Banda Sakti', 'Pilih bungamu sendiri—mawar, krisan, aster, gerbera, dan baby breath segar.', '/images/product-flower-bar.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Segar', TRUE, 6),
+  ('55555555-5555-4555-8555-555555555507', 'Suvenir Resin & Pembatas Buku', 'Kelopak bunga asli terawetkan dalam resin bening, kado manis untuk sahabat.', '/images/product-resin-craft.jpg', 'https://instagram.com/abadikalaflowers', 'Lini Abadi', TRUE, 7),
+  ('55555555-5555-4555-8555-555555555508', 'Meja Kerja Pengawetan Buket', 'Proses teliti mengubah buket hari spesial menjadi bingkai kenangan.', '/images/product-jasa-pengawetan.jpg', 'https://instagram.com/abadikalaflowers', 'Jasa Pengawetan', TRUE, 8)
+ON CONFLICT (id) DO NOTHING;
 
--- 7b. Seed Realistic Customer Testimonials (Editable via Admin CMS)
-INSERT INTO public.testimonials (customer_name, occasion, rating, quote, is_published, sort_order) VALUES
-  ('Cut Nadira Salsabila', 'Wisuda Universitas Malikussaleh', 5, 'Pesan Buket Besar Gaya Korea untuk wisuda adik saya. Bunganya segar banget, wrapping-nya rapi dan elegan, padahal harganya sangat bersahabat. Kartu ucapan tulisan tangannya juga manis sekali!', TRUE, 1),
-  ('Teuku Farhan Pratama', 'Anniversary di Lhokseumawe', 5, 'Mawar Kubah Kaca dari Abadikala jadi hadiah paling berkesan untuk istri saya. Packing aman, pengantaran kurir studio tepat waktu ke rumah di Muara Dua, dan tampilannya benar-benar premium.', TRUE, 2),
-  ('Raudhatul Jannah', 'Jasa Pengawetan Buket Pernikahan', 5, 'Senang sekali buket akad nikah saya tidak berakhir layu. Tim Abadikala mengolahnya menjadi bingkai shadow-box yang indah dan sekarang jadi pajangan favorit di ruang tamu kami.', TRUE, 3),
-  ('Dinda Khairunnisa', 'Sidang Skripsi & Kado Sahabat', 5, 'Buket Kecil Plastik Bening Rp75.000 sudah terlihat sangat manis dan estetik untuk kado sidang teman kampus. Suka banget karena di Lhokseumawe akhirnya ada toko bunga segar yang rapi dan mudah dipesan online.', TRUE, 4)
-ON CONFLICT DO NOTHING;
+-- 7b. Seed Realistic Customer Testimonials (deterministic UUIDs, Editable via Admin CMS)
+INSERT INTO public.testimonials (id, customer_name, occasion, rating, quote, is_published, sort_order) VALUES
+  ('66666666-6666-4666-8666-666666666601', 'Cut Nadira Salsabila', 'Wisuda Universitas Malikussaleh', 5, 'Pesan Buket Besar Gaya Korea untuk wisuda adik saya. Bunganya segar banget, wrapping-nya rapi dan elegan, padahal harganya sangat bersahabat. Kartu ucapan tulisan tangannya juga manis sekali!', TRUE, 1),
+  ('66666666-6666-4666-8666-666666666602', 'Teuku Farhan Pratama', 'Anniversary di Lhokseumawe', 5, 'Mawar Kubah Kaca dari Abadikala jadi hadiah paling berkesan untuk istri saya. Packing aman, pengantaran kurir studio tepat waktu ke rumah di Muara Dua, dan tampilannya benar-benar premium.', TRUE, 2),
+  ('66666666-6666-4666-8666-666666666603', 'Raudhatul Jannah', 'Jasa Pengawetan Buket Pernikahan', 5, 'Senang sekali buket akad nikah saya tidak berakhir layu. Tim Abadikala mengolahnya menjadi bingkai shadow-box yang indah dan sekarang jadi pajangan favorit di ruang tamu kami.', TRUE, 3),
+  ('66666666-6666-4666-8666-666666666604', 'Dinda Khairunnisa', 'Sidang Skripsi & Kado Sahabat', 5, 'Buket Kecil Plastik Bening Rp75.000 sudah terlihat sangat manis dan estetik untuk kado sidang teman kampus. Suka banget karena di Lhokseumawe akhirnya ada toko bunga segar yang rapi dan mudah dipesan online.', TRUE, 4)
+ON CONFLICT (id) DO NOTHING;
 
--- 8. Business Settings (Complete Realistic Lhokseumawe Florist Setup)
+-- 8. Business Settings (Complete Realistic Lhokseumawe Florist Setup + FAQs)
 INSERT INTO public.business_settings (setting_key, setting_group, value, is_configured, is_public) VALUES
   ('brand_identity', 'general', '{"business_name": "Abadikala Fresh Flowers", "short_name": "Abadikala", "tagline": "Segar Hari Ini, Abadi Selamanya", "city": "Lhokseumawe, Aceh, Indonesia", "logo_url": ""}'::jsonb, TRUE, TRUE),
   ('contact_info', 'contact', '{"address": "Jl. Merdeka Barat No. 48, Simpang Empat, Kec. Banda Sakti, Kota Lhokseumawe, Aceh 24351", "whatsapp": "+62 822-7410-8820", "email": "halo@abadikalaflowers.id", "operational_hours": "Senin–Minggu, 08.00–21.00 WIB"}'::jsonb, TRUE, TRUE),
@@ -262,5 +271,6 @@ INSERT INTO public.business_settings (setting_key, setting_group, value, is_conf
   ('delivery_policy', 'operations', '{"service_areas": "Kota Lhokseumawe (Banda Sakti, Muara Dua, Muara Satu, Blang Mangat) & ekspedisi seluruh Indonesia khusus Lini Abadi", "courier_info": "Kurir Toko Khusus Abadikala (Rp15.000) & Pick-up di Studio (Rp0)", "min_order_amount": 25000, "preorder_lead_time": "Minimal H-1 buket segar custom & H-3 produk personalisasi Lini Abadi (same-day sebelum pukul 14.00 WIB)", "processing_time": "Buket segar 1–3 jam • Lini Abadi 2–5 hari kerja • Jasa pengawetan 14–21 hari kerja", "pickup_available": true}'::jsonb, TRUE, TRUE),
   ('payment_config', 'payment', '{"manual_transfer_enabled": true, "payment_gateway_enabled": false, "bank_accounts": [{"bank_name": "Bank Syariah Indonesia (BSI)", "account_number": "7189 4025 18", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}, {"bank_name": "Bank Central Asia (BCA)", "account_number": "8240 5192 73", "account_holder": "Abadikala Fresh Flowers (Yulistia Masruri Sitepu)"}], "payment_instructions": "Lakukan transfer sesuai nominal total pesanan ke rekening resmi BSI atau BCA, lalu unggah bukti transfer melalui halaman konfirmasi pesanan. Verifikasi maksimal 1x30 menit pada jam operasional (08.00–21.00 WIB)."}'::jsonb, TRUE, TRUE),
   ('personalized_services', 'services', '{"handwritten_card": true, "custom_bouquet": true, "color_request": true, "bouquet_preservation": true, "gift_arrangement": true}'::jsonb, TRUE, TRUE),
-  ('legal_drafts', 'legal', '{"is_final": true, "privacy_policy": "Abadikala Fresh Flowers melindungi seluruh data pribadi pelanggan (nama, email, WhatsApp, alamat pengiriman, serta isi kartu ucapan) dan hanya menggunakannya untuk pemrosesan pesanan serta layanan pelanggan.", "terms_conditions": "Setiap rangkaian bunga dirangkai segar saat dipesan. Ketersediaan jenis bunga musiman dapat menyesuaikan stok harian dengan nuansa warna dan kualitas setara melalui konfirmasi admin.", "shipping_policy": "Pengantaran Kurir Toko area Kota Lhokseumawe Rp15.000, Pick-up di Studio Banda Sakti Rp0, serta pengiriman luar kota khusus Lini Abadi Rp25.000 via ekspedisi aman kotak kraft.", "cancellation_policy": "Pembatalan sebelum pembayaran diverifikasi bebas biaya. Pesanan Lini Segar terbayar dapat dibatalkan maksimal H-1 sebelum dirangkai. Garansi penggantian berlaku maksimal 3 jam setelah paket diterima dengan bukti foto."}'::jsonb, TRUE, TRUE)
+  ('legal_drafts', 'legal', '{"is_final": true, "privacy_policy": "Abadikala Fresh Flowers melindungi seluruh data pribadi pelanggan (nama, email, WhatsApp, alamat pengiriman, serta isi kartu ucapan) dan hanya menggunakannya untuk pemrosesan pesanan serta layanan pelanggan.", "terms_conditions": "Setiap rangkaian bunga dirangkai segar saat dipesan. Ketersediaan jenis bunga musiman dapat menyesuaikan stok harian dengan nuansa warna dan kualitas setara melalui konfirmasi admin.", "shipping_policy": "Pengantaran Kurir Toko area Kota Lhokseumawe Rp15.000, Pick-up di Studio Banda Sakti Rp0, serta pengiriman luar kota khusus Lini Abadi Rp25.000 via ekspedisi aman kotak kraft.", "cancellation_policy": "Pembatalan sebelum pembayaran diverifikasi bebas biaya. Pesanan Lini Segar terbayar dapat dibatalkan maksimal H-1 sebelum dirangkai. Garansi penggantian berlaku maksimal 3 jam setelah paket diterima dengan bukti foto."}'::jsonb, TRUE, TRUE),
+  ('faqs', 'cms', '[{"id":"faq-1","category":"Produk & Lini","question":"Apa perbedaan Lini Segar dan Lini Abadi di Abadikala?","answer":"Lini Segar menghadirkan rangkaian bunga segar pilihan untuk dinikmati hari ini (buket kecil, buket Korea, bunga meja langganan, Flower Bar). Lini Abadi menghadirkan produk bunga awetan seperti buket kering, pressed flower, plakat akrilik, shadow-box, mawar kubah kaca, suvenir resin, serta jasa pengawetan buket.","is_active":true},{"id":"faq-2","category":"Pemesanan & Pre-Order","question":"Apakah bisa pesan mendadak (same-day) di area Lhokseumawe?","answer":"Bisa! Untuk buket bunga segar, pesanan same-day dilayani hingga pukul 14.00 WIB sesuai stok harian. Custom bouquet disarankan H-1 dan produk personalisasi Lini Abadi minimal H-3.","is_active":true},{"id":"faq-3","category":"Pengiriman","question":"Berapa ongkos kirim di Lhokseumawe dan apakah bisa kirim ke luar kota?","answer":"Tarif Kurir Toko area Kota Lhokseumawe Rp15.000 flat, atau Pick-up Gratis di studio Jl. Merdeka Barat No. 48, Banda Sakti. Produk Lini Abadi dapat dikirim ke luar kota via ekspedisi Rp25.000.","is_active":true},{"id":"faq-4","category":"Pembayaran","question":"Metode pembayaran apa saja yang tersedia?","answer":"Transfer Bank Syariah Indonesia (BSI) dan BCA. Unggah bukti transfer pada halaman konfirmasi pesanan untuk diverifikasi admin maksimal 1x30 menit (08.00–21.00 WIB).","is_active":true},{"id":"faq-5","category":"Pengawetan Buket","question":"Kapan waktu terbaik menyerahkan buket untuk Jasa Pengawetan Buket?","answer":"Idealnya 1–2 hari setelah acara (wisuda, lamaran, atau pernikahan) saat kelopak masih segar. Proses pengeringan & penyusunan bingkai membutuhkan 14–21 hari kerja.","is_active":true}]'::jsonb, TRUE, TRUE)
 ON CONFLICT (setting_key) DO NOTHING;

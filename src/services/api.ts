@@ -112,23 +112,31 @@ export async function fetchPublicProducts(filters: ProductFilterParams = {}): Pr
   let products: PublicProduct[] = [];
 
   if (isSupabaseConfigured && supabase) {
-    // Queries ONLY products_public view — cost_price (HPP) is structurally impossible to read here
-    const { data, error } = await supabase
-      .from('products_public')
-      .select('*, categories(name, slug), product_images(*), product_variants(*)');
-    if (error) throw new Error(error.message);
+    // Queries ONLY products_public view — cost_price (HPP) is structurally impossible to read here.
+    // Flat parallel queries avoid PostgREST view-relationship introspection issues.
+    const [
+      { data: prodData, error: prodErr },
+      { data: catData },
+      { data: imgData },
+      { data: varData },
+      { data: invData },
+      { data: revData },
+    ] = await Promise.all([
+      supabase.from('products_public').select('*'),
+      supabase.from('categories').select('id, name, slug'),
+      supabase.from('product_images').select('*').order('sort_order', { ascending: true }),
+      supabase.from('product_variants').select('*').eq('is_active', true).order('sort_order', { ascending: true }),
+      supabase.from('inventory').select('product_id, stock_quantity, is_stock_configured').eq('item_type', 'product'),
+      supabase.from('reviews').select('product_id, rating').eq('is_published', true),
+    ]);
+    if (prodErr) throw new Error(prodErr.message);
 
-    const { data: invData } = await supabase
-      .from('inventory')
-      .select('product_id, stock_quantity, is_stock_configured')
-      .eq('item_type', 'product');
+    const catMap = new Map((catData || []).map((c) => [c.id, c]));
 
-    const { data: revData } = await supabase
-      .from('reviews')
-      .select('product_id, rating')
-      .eq('is_published', true);
-
-    products = (data || []).map((row) => {
+    products = (prodData || []).map((row) => {
+      const cat = row.category_id ? catMap.get(row.category_id) : undefined;
+      const imgs = (imgData || []).filter((i) => i.product_id === row.id);
+      const vars = (varData || []).filter((v) => v.product_id === row.id);
       const inv = (invData || []).find((i) => i.product_id === row.id);
       const prodRevs = (revData || []).filter((r) => r.product_id === row.id);
       const avg =
@@ -137,12 +145,10 @@ export async function fetchPublicProducts(filters: ProductFilterParams = {}): Pr
           : null;
       return {
         ...row,
-        category_name: row.categories?.name,
-        category_slug: row.categories?.slug,
-        images: (row.product_images || []).sort(
-          (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
-        ),
-        variants: (row.product_variants || []).filter((v: { is_active: boolean }) => v.is_active),
+        category_name: cat?.name,
+        category_slug: cat?.slug,
+        images: imgs,
+        variants: vars,
         stock_quantity: inv?.stock_quantity ?? 0,
         is_stock_configured: inv?.is_stock_configured ?? false,
         average_rating: avg,
@@ -1709,8 +1715,12 @@ export async function fetchAdminCustomers(): Promise<
   (UserProfile & { order_count: number; total_spent: number })[]
 > {
   if (isSupabaseConfigured && supabase) {
-    const { data: profiles } = await supabase.from('profiles').select('*, user_roles(role)');
-    const { data: orders } = await supabase.from('orders').select('user_id, total_amount, status, payment_status');
+    const [{ data: profiles }, { data: roles }, { data: orders }] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('user_roles').select('user_id, role'),
+      supabase.from('orders').select('user_id, total_amount, status, payment_status'),
+    ]);
+    const roleMap = new Map((roles || []).map((r) => [r.user_id, r.role]));
     return (profiles || []).map((p) => {
       const custOrders = (orders || []).filter((o) => o.user_id === p.id && o.status !== 'cancelled');
       return {
@@ -1719,7 +1729,7 @@ export async function fetchAdminCustomers(): Promise<
         email: p.email,
         whatsapp_number: p.whatsapp_number,
         avatar_url: p.avatar_url,
-        role: p.user_roles?.[0]?.role || 'customer',
+        role: (roleMap.get(p.id) as AppRole) || 'customer',
         is_active: p.is_active,
         created_at: p.created_at,
         order_count: custOrders.length,
